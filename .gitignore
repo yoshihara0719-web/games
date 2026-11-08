@@ -1,0 +1,8 @@
+node_modules
+.next
+.pglite
+.env
+.env.*
+*.log
+tsconfig.tsbuildinfo
+.DS_Store

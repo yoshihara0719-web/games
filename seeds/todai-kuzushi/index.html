@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>灯台くずし</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #10182a; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; background: #10182a; touch-action: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<p class="sr">光の玉を鏡で跳ね返し、灯台の暗い窓をすべて灯します。左右のキー、または指で鏡を動かします。玉を落とすとライフが減ります。</p>
+<canvas id="c" width="480" height="720" tabindex="0" aria-label="灯台くずし"></canvas>
+<script>
+(function () {
+  var canvas = document.getElementById("c");
+  var ctx = canvas.getContext("2d");
+  var W = 480, H = 720, FONT = '"Hiragino Sans", "Yu Gothic", "WenQuanYi Micro Hei", sans-serif';
+  var COLS = 6, ROWS = 4, paddleW = 104, paddleY = 628;
+  var mode = "title", score = 0, lives = 3, paddleX = W / 2, follow = false, target = W / 2;
+  var keys = { left: false, right: false };
+  var ball = { x: W / 2, y: paddleY - 16, vx: 0, vy: 0, r: 8, stuck: true };
+  var blocks = [], last = 0, audio = null;
+  var colors = ["#f2c14e", "#ee964b", "#e25b45", "#c44536"];
+
+  function layout() {
+    blocks = [];
+    var gap = 8, left = 96, top = 168, gridW = 288;
+    var bw = (gridW - (COLS - 1) * gap) / COLS, bh = 36;
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        blocks.push({
+          x: left + c * (bw + gap),
+          y: top + r * (bh + gap),
+          w: bw,
+          h: bh,
+          color: colors[r],
+          lit: false
+        });
+      }
+    }
+  }
+
+  function litCount() {
+    var n = 0;
+    for (var i = 0; i < blocks.length; i++) if (blocks[i].lit) n += 1;
+    return n;
+  }
+
+  function fit() {
+    var ratio = W / H;
+    var cw = window.innerWidth, ch = cw / ratio;
+    if (ch > window.innerHeight) { ch = window.innerHeight; cw = ch * ratio; }
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
+  }
+  window.addEventListener("resize", fit);
+  fit();
+  layout();
+
+  function beep(freq, dur) {
+    try {
+      if (!audio) audio = new AudioContext();
+      if (audio.state === "suspended") audio.resume();
+      var o = audio.createOscillator();
+      var g = audio.createGain();
+      o.frequency.value = freq;
+      o.connect(g);
+      g.connect(audio.destination);
+      g.gain.setValueAtTime(0.04, audio.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + dur);
+      o.start();
+      o.stop(audio.currentTime + dur);
+    } catch (e) {}
+  }
+
+  function stick() {
+    ball.stuck = true;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.x = paddleX;
+    ball.y = paddleY - 14;
+  }
+
+  function begin() {
+    mode = "play";
+    score = 0;
+    lives = 3;
+    layout();
+    stick();
+    launch();
+  }
+
+  function launch() {
+    if (!ball.stuck) return;
+    ball.stuck = false;
+    ball.vx = Math.random() * 140 - 70;
+    ball.vy = -300;
+  }
+
+  function pointX(event) {
+    var rect = canvas.getBoundingClientRect();
+    return (event.clientX - rect.left) * (canvas.width / rect.width);
+  }
+
+  function step(dt) {
+    if (keys.left) paddleX -= 380 * dt;
+    if (keys.right) paddleX += 380 * dt;
+    if (follow && !keys.left && !keys.right) paddleX += (target - paddleX) * Math.min(1, dt * 12);
+    paddleX = Math.max(paddleW / 2 + 10, Math.min(W - paddleW / 2 - 10, paddleX));
+    if (ball.stuck) { ball.x = paddleX; ball.y = paddleY - 14; return; }
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+    if (ball.x < ball.r + 4) { ball.x = ball.r + 4; ball.vx = Math.abs(ball.vx); }
+    if (ball.x > W - ball.r - 4) { ball.x = W - ball.r - 4; ball.vx = -Math.abs(ball.vx); }
+    if (ball.y < ball.r + 8) { ball.y = ball.r + 8; ball.vy = Math.abs(ball.vy); }
+    if (ball.vy > 0 && ball.y >= paddleY - ball.r && ball.y <= paddleY + 16 && Math.abs(ball.x - paddleX) <= paddleW / 2 + ball.r) {
+      var n = (ball.x - paddleX) / (paddleW / 2);
+      if (n < -1) n = -1;
+      if (n > 1) n = 1;
+      var speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy) * 1.04;
+      if (speed < 300) speed = 300;
+      if (speed > 460) speed = 460;
+      var angle = n * 1.05;
+      ball.vx = Math.sin(angle) * speed;
+      ball.vy = -Math.abs(Math.cos(angle) * speed);
+      ball.y = paddleY - ball.r - 1;
+      beep(480, 0.04);
+    }
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      if (b.lit) continue;
+      var cx = Math.max(b.x, Math.min(ball.x, b.x + b.w));
+      var cy = Math.max(b.y, Math.min(ball.y, b.y + b.h));
+      var dx = ball.x - cx, dy = ball.y - cy;
+      if (dx * dx + dy * dy <= ball.r * ball.r) {
+        b.lit = true;
+        score += 1;
+        if (Math.abs(dx) > Math.abs(dy)) { ball.vx *= -1; ball.x += ball.vx > 0 ? 3 : -3; }
+        else { ball.vy *= -1; ball.y += ball.vy > 0 ? 3 : -3; }
+        beep(720, 0.05);
+        if (litCount() === blocks.length) mode = "win";
+        break;
+      }
+    }
+    if (mode !== "play") return;
+    if (Math.abs(ball.vy) < 80) ball.vy = (ball.vy < 0 ? -1 : 1) * 80;
+    if (ball.y > H - 16) {
+      lives -= 1;
+      beep(140, 0.16);
+      if (lives <= 0) mode = "over";
+      else stick();
+    }
+  }
+
+  function label(text, x, y, size, align, color) {
+    ctx.font = size + "px " + FONT;
+    ctx.textAlign = align || "left";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(8, 10, 18, 0.7)";
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = color || "#f6f1e4";
+    ctx.fillText(text, x, y);
+  }
+
+  function draw() {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#243056");
+    g.addColorStop(0.55, "#3d3350");
+    g.addColorStop(1, "#1a2430");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#14202c";
+    ctx.fillRect(0, 676, W, 44);
+    var glow = blocks.length ? litCount() / blocks.length : 0;
+    ctx.fillStyle = "#7a3030";
+    ctx.beginPath();
+    ctx.moveTo(240, 42);
+    ctx.lineTo(284, 84);
+    ctx.lineTo(196, 84);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 214, 120, " + (0.28 + glow * 0.72) + ")";
+    ctx.fillRect(214, 84, 52, 24);
+    ctx.fillStyle = "#3a342c";
+    ctx.beginPath();
+    ctx.moveTo(168, 108);
+    ctx.lineTo(312, 108);
+    ctx.lineTo(336, 560);
+    ctx.lineTo(144, 560);
+    ctx.closePath();
+    ctx.fill();
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      ctx.fillStyle = b.lit ? "#ffd56a" : "#141820";
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.strokeStyle = b.lit ? "rgba(255, 236, 190, 0.9)" : "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(b.x + 1.5, b.y + 1.5, b.w - 3, b.h - 3);
+      ctx.beginPath();
+      ctx.moveTo(b.x + b.w / 2, b.y);
+      ctx.lineTo(b.x + b.w / 2, b.y + b.h);
+      ctx.moveTo(b.x, b.y + b.h / 2);
+      ctx.lineTo(b.x + b.w, b.y + b.h / 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#e7edf5";
+    round(paddleX - paddleW / 2, paddleY, paddleW, 14, 7);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#c8963e";
+    ctx.stroke();
+    var light = ctx.createRadialGradient(ball.x - 2, ball.y - 2, 1, ball.x, ball.y, ball.r);
+    light.addColorStop(0, "#fff7d6");
+    light.addColorStop(1, "#e7a23a");
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+    ctx.fill();
+    if (mode === "play") {
+      label("窓 " + score + " / " + blocks.length, 18, 36, 22, "left");
+      label("ライフ " + lives, 330, 36, 22, "left");
+      if (ball.stuck) label("タップで打ち出す", W / 2, 600, 18, "center", "#ffd56a");
+    }
+    if (mode === "title") {
+      ctx.fillStyle = "rgba(10, 12, 20, 0.28)";
+      ctx.fillRect(0, 220, W, 250);
+      label("灯台くずし", W / 2, 300, 46, "center");
+      label("光の玉で、暗い窓を灯そう", W / 2, 352, 20, "center");
+      label("鏡は指・マウス・左右キー", W / 2, 390, 18, "center");
+      label("タップしてはじめる", W / 2, 450, 24, "center", "#ffd56a");
+    }
+    if (mode === "win" || mode === "over") {
+      ctx.fillStyle = "rgba(10, 12, 20, 0.35)";
+      ctx.fillRect(0, 250, W, 210);
+      label(mode === "win" ? "灯台が明るくなった" : "海に落ちてしまった", W / 2, 320, 32, "center");
+      label(score + " の窓が灯った", W / 2, 370, 22, "center");
+      label("タップでもう一度", W / 2, 430, 22, "center", "#ffd56a");
+    }
+  }
+
+  function round(x, y, w, h, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+    else ctx.rect(x, y, w, h);
+  }
+
+  function frame(ts) {
+    if (!last) last = ts;
+    var dt = Math.min(0.033, (ts - last) / 1000);
+    last = ts;
+    if (mode === "play" && !document.hidden) step(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  canvas.addEventListener("pointerdown", function (event) {
+    event.preventDefault();
+    canvas.focus();
+    follow = true;
+    target = pointX(event);
+    if (mode !== "play") begin();
+    else if (ball.stuck) launch();
+  });
+  canvas.addEventListener("pointermove", function (event) {
+    if (event.pointerType === "touch" || event.buttons) {
+      follow = true;
+      target = pointX(event);
+    }
+  });
+  canvas.addEventListener("touchmove", function (event) { event.preventDefault(); }, { passive: false });
+  window.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") { keys.left = true; follow = false; event.preventDefault(); }
+    if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") { keys.right = true; follow = false; event.preventDefault(); }
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      if (mode !== "play") begin();
+      else if (ball.stuck) launch();
+    }
+  });
+  window.addEventListener("keyup", function (event) {
+    if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") keys.left = false;
+    if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") keys.right = false;
+  });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

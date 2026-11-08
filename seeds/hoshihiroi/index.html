@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>星ひろい</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #07111f; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; background: #07111f; touch-action: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<p class="sr">夜の川で落ちてくる星を舟で受けます。左右のキー、または指で舟を動かします。金の星は5点、流木に当たるとライフが減ります。40秒です。</p>
+<canvas id="c" width="480" height="720" tabindex="0" aria-label="星ひろい"></canvas>
+<script>
+(function () {
+  var canvas = document.getElementById("c");
+  var ctx = canvas.getContext("2d");
+  var W = 480, H = 720, FONT = '"Hiragino Sans", "Yu Gothic", "WenQuanYi Micro Hei", sans-serif';
+  var mode = "title", score = 0, best = 0, lives = 3, time = 40;
+  var boat = W / 2, target = W / 2, follow = false;
+  var keys = { left: false, right: false };
+  var items = [], spawn = 0, last = 0, audio = null;
+  var sky = [];
+  for (var i = 0; i < 36; i++) sky.push({ x: Math.random() * W, y: Math.random() * 520, r: Math.random() * 1.3 + 0.4 });
+
+  function fit() {
+    var ratio = W / H;
+    var cw = window.innerWidth, ch = cw / ratio;
+    if (ch > window.innerHeight) { ch = window.innerHeight; cw = ch * ratio; }
+    canvas.style.width = cw + "px";
+    canvas.style.height = ch + "px";
+  }
+  window.addEventListener("resize", fit);
+  fit();
+
+  function beep(freq, dur) {
+    try {
+      if (!audio) audio = new AudioContext();
+      if (audio.state === "suspended") audio.resume();
+      var o = audio.createOscillator();
+      var g = audio.createGain();
+      o.frequency.value = freq;
+      o.connect(g);
+      g.connect(audio.destination);
+      g.gain.setValueAtTime(0.045, audio.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + dur);
+      o.start();
+      o.stop(audio.currentTime + dur);
+    } catch (e) {}
+  }
+
+  function begin() {
+    mode = "play";
+    score = 0;
+    lives = 3;
+    time = 40;
+    items = [];
+    spawn = 0.15;
+    boat = W / 2;
+  }
+
+  function spawnItem() {
+    if (items.length > 24) return;
+    var roll = Math.random();
+    var kind = roll < 0.16 ? "wood" : roll < 0.26 ? "gold" : "star";
+    items.push({
+      kind: kind,
+      x: 36 + Math.random() * (W - 72),
+      y: -20,
+      vy: kind === "gold" ? 80 + Math.random() * 40 : 140 + Math.random() * 90,
+      vx: kind === "wood" ? Math.random() * 50 - 25 : 0,
+      r: kind === "gold" ? 15 : kind === "wood" ? 16 : 11
+    });
+  }
+
+  function pointX(event) {
+    var rect = canvas.getBoundingClientRect();
+    return (event.clientX - rect.left) * (canvas.width / rect.width);
+  }
+
+  function step(dt) {
+    if (keys.left) boat -= 320 * dt;
+    if (keys.right) boat += 320 * dt;
+    if (follow && !keys.left && !keys.right) boat += (target - boat) * Math.min(1, dt * 9);
+    boat = Math.max(42, Math.min(W - 42, boat));
+    time -= dt;
+    spawn -= dt;
+    var pace = 0.48 - (1 - Math.max(time, 0) / 40) * 0.2;
+    if (spawn <= 0) { spawn = pace; spawnItem(); }
+    var next = [];
+    var boatY = H - 108;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      it.y += it.vy * dt;
+      it.x += it.vx * dt;
+      if (it.x < 24 || it.x > W - 24) it.vx *= -1;
+      var caught = it.y > boatY - 8 && it.y < boatY + 36 && Math.abs(it.x - boat) < 40;
+      if (caught) {
+        if (it.kind === "wood") { lives -= 1; beep(150, 0.12); }
+        else { score += it.kind === "gold" ? 5 : 1; beep(it.kind === "gold" ? 880 : 620, 0.05); }
+        continue;
+      }
+      if (it.y < H + 30) next.push(it);
+    }
+    items = next;
+    if (lives <= 0 || time <= 0) {
+      if (score > best) best = score;
+      mode = "over";
+    }
+  }
+
+  function star(x, y, r, color) {
+    ctx.beginPath();
+    for (var i = 0; i < 5; i++) {
+      var outer = -Math.PI / 2 + i * Math.PI * 2 / 5;
+      var inner = outer + Math.PI / 5;
+      ctx.lineTo(x + Math.cos(outer) * r, y + Math.sin(outer) * r);
+      ctx.lineTo(x + Math.cos(inner) * r * 0.42, y + Math.sin(inner) * r * 0.42);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function label(text, x, y, size, align, color) {
+    ctx.font = size + "px " + FONT;
+    ctx.textAlign = align || "left";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(4, 8, 18, 0.72)";
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = color || "#f6f1e4";
+    ctx.fillText(text, x, y);
+  }
+
+  function draw() {
+    var skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+    skyGrad.addColorStop(0, "#07111f");
+    skyGrad.addColorStop(0.72, "#1a3358");
+    skyGrad.addColorStop(1, "#102033");
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#f3e2b3";
+    ctx.beginPath();
+    ctx.arc(390, 86, 26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#07111f";
+    ctx.beginPath();
+    ctx.arc(402, 80, 22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 246, 210, 0.85)";
+    for (var s = 0; s < sky.length; s++) ctx.fillRect(sky[s].x, sky[s].y, sky[s].r, sky[s].r);
+    ctx.fillStyle = "#0d2138";
+    ctx.fillRect(0, H - 150, W, 150);
+    ctx.strokeStyle = "rgba(255,255,255,0.16)";
+    ctx.lineWidth = 2;
+    for (var w = 0; w < 4; w++) {
+      ctx.beginPath();
+      ctx.moveTo(0, H - 118 + w * 26);
+      ctx.bezierCurveTo(140, H - 132 + w * 26, 250, H - 100 + w * 26, W, H - 120 + w * 26);
+      ctx.stroke();
+    }
+    if (mode !== "title") {
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.kind === "wood") {
+          ctx.fillStyle = "#6d4b2f";
+          ctx.fillRect(it.x - 20, it.y - 6, 40, 12);
+          ctx.fillStyle = "#8a6240";
+          ctx.fillRect(it.x - 8, it.y - 12, 16, 8);
+        } else {
+          star(it.x, it.y, it.r, it.kind === "gold" ? "#ffd56a" : "#fff6d2");
+        }
+      }
+      ctx.fillStyle = "#c23b2e";
+      ctx.beginPath();
+      ctx.moveTo(boat - 36, H - 104);
+      ctx.lineTo(boat + 36, H - 104);
+      ctx.quadraticCurveTo(boat + 28, H - 74, boat, H - 70);
+      ctx.quadraticCurveTo(boat - 28, H - 74, boat - 36, H - 104);
+      ctx.fill();
+      ctx.fillStyle = "#f3e2b3";
+      ctx.fillRect(boat - 2, H - 132, 4, 30);
+      ctx.beginPath();
+      ctx.moveTo(boat, H - 130);
+      ctx.lineTo(boat + 22, H - 108);
+      ctx.lineTo(boat, H - 108);
+      ctx.fill();
+    }
+    if (mode === "play") {
+      label("星 " + score, 18, 36, 22, "left");
+      label("ライフ " + lives, 190, 36, 22, "left");
+      label(Math.ceil(Math.max(time, 0)) + "びょう", 360, 36, 22, "left");
+    }
+    if (mode === "title") {
+      label("星ひろい", W / 2, 280, 52, "center");
+      label("落ちてくる星を舟で受けよう", W / 2, 340, 20, "center");
+      label("金の星は 5、流木はライフが減る", W / 2, 374, 18, "center");
+      label("指・マウス・左右キーで動かす", W / 2, 430, 18, "center");
+      label("タップしてはじめる", W / 2, 500, 24, "center", "#ffd56a");
+      if (best > 0) label("きろく " + best, W / 2, 548, 18, "center");
+    }
+    if (mode === "over") {
+      label(lives <= 0 ? "舟が転覆した" : "夜が明けた", W / 2, 300, 40, "center");
+      label(score + " この星", W / 2, 360, 26, "center");
+      label("きろく " + best, W / 2, 400, 20, "center");
+      label("タップでもう一度", W / 2, 470, 22, "center", "#ffd56a");
+    }
+  }
+
+  function frame(ts) {
+    if (!last) last = ts;
+    var dt = Math.min(0.033, (ts - last) / 1000);
+    last = ts;
+    if (mode === "play" && !document.hidden) step(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  canvas.addEventListener("pointerdown", function (event) {
+    event.preventDefault();
+    canvas.focus();
+    follow = true;
+    target = pointX(event);
+    keys.left = false;
+    keys.right = false;
+    if (mode !== "play") begin();
+  });
+  canvas.addEventListener("pointermove", function (event) {
+    if (event.pointerType === "touch" || event.buttons) {
+      follow = true;
+      target = pointX(event);
+    }
+  });
+  canvas.addEventListener("touchmove", function (event) { event.preventDefault(); }, { passive: false });
+  window.addEventListener("keydown", function (event) {
+    if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") { keys.left = true; follow = false; event.preventDefault(); }
+    if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") { keys.right = true; follow = false; event.preventDefault(); }
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      if (mode !== "play") begin();
+    }
+  });
+  window.addEventListener("keyup", function (event) {
+    if (event.key === "ArrowLeft" || event.key === "a" || event.key === "A") keys.left = false;
+    if (event.key === "ArrowRight" || event.key === "d" || event.key === "D") keys.right = false;
+  });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

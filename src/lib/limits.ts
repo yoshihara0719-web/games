@@ -1,0 +1,30 @@
+export const LIMITS = {
+  uploadBytes: 3 * 1024 * 1024,
+  expandedBytes: 8 * 1024 * 1024,
+  maxFiles: 40,
+  maxFileBytes: 4 * 1024 * 1024,
+  thumbBytes: 500 * 1024,
+  title: 48,
+  author: 32,
+  description: 300,
+  storageBytes: 80 * 1024 * 1024,
+  maxGames: 400,
+  requestBytes: 3 * 1024 * 1024 + 500 * 1024 + 64 * 1024,
+} as const;
+
+export const POST_ERRORS: Record<string, string> = {
+  fields: "タイトル、作者名、説明を入れてください。",
+  "too-large": "ファイルが大きすぎます。HTML または zip は 3MB までです。",
+  "bad-type": "投稿できるのは、中身のある HTML ファイルか zip です。",
+  "bad-zip": "zip を開けませんでした。別の書き出しで試してください。",
+  "bad-name": "zip の中に使えないファイル名があります。フォルダ名に .. は使えません。",
+  "bad-ext": "zip に対応していない種類のファイルがあります。HTML、CSS、JS、画像、音声、フォント、WASM を使ってください。",
+  "no-index": "zip のいちばん上に index.html を置いてください。HTML が1つだけのときは、そのファイルでも受け付けます。",
+  "too-many": "ファイル数が多すぎます。40 までです。",
+  expanded: "展開後のサイズが大きすぎます。8MB までです。",
+  thumb: "サムネイルは PNG、JPEG、GIF、WebP で、500KB までです。",
+  storage: "保存できる量の上限に達しています。新しい投稿はいま受け付けていません。",
+  rate: "投稿の間隔が短すぎます。しばらくしてからもう一度どうぞ。",
+  origin: "投稿は、あそび帖の投稿ページから行ってください。",
+  server: "投稿を保存できませんでした。もう一度お試しください。",
+};
